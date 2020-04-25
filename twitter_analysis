@@ -1,0 +1,242 @@
+'''
+Author : Ketulkumar
+Email : k2lsuthar@gmail.com
+_updated : 04-24-2020
+'''
+
+import os
+import subprocess
+import json
+import string
+import pytz
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
+import pandas as pd
+import numpy as np
+
+from datetime import datetime
+from nltk.corpus import stopwords
+from nltk.tokenize import TweetTokenizer
+from collections import defaultdict
+from collections import Counter
+
+
+
+_datadir = r'C:\Me\Study\Conestoga\II\PROG8460\Final\twitter_stream_2019_09_30\30'
+
+_totalrecords = 0
+_totalcreated = 0
+_totaldeleted = 0
+
+_mindate = datetime.max.replace(tzinfo=pytz.UTC)
+_maxdate = datetime.min.replace(tzinfo=pytz.UTC)
+
+_hastagpertweet = defaultdict(int)
+_usermentions = Counter()
+_tweettokens = Counter()
+
+tokenizer = TweetTokenizer()
+_punctuations = list(string.punctuation)
+_extratokens = ["rt", "via", "..."]
+
+_stopwords = stopwords.words("english") + _punctuations + _extratokens
+
+
+def gethashtags(tweet):
+    '''
+    This function extract hashtag from the tweet.
+    :param tweet: json
+    :return: list of hashtags
+    '''
+    entities = tweet.get('entities',{})
+    _hashtags = entities.get("hashtags", {})
+    return [_hash['text'].lower() for _hash in _hashtags]
+
+
+def gettokens(_text, tokenizer=TweetTokenizer(), stopwords=[]):
+    '''
+    This function convert the tweet text into token and remove stop words and return token.
+    :param _text: string
+    :param tokenizer: Object of TweetTokenizer
+    :param stopwords: list of stop words
+    :return: list of token
+    '''
+    _text = _text.lower()
+    _tokens = tokenizer.tokenize(_text)
+    return [token for token in _tokens if token not in stopwords and not token.isdigit() and len(token) > 1]
+
+
+def getusermentions(tweet):
+    '''
+    This function return user_mentions field from tweet
+    :param tweet: json
+    :return: list of user mentions
+    '''
+    entities = tweet.get('entities', {})
+    _users = entities.get("user_mentions", {})
+    return [_user['screen_name'].lower() for _user in _users]
+
+
+def process_tweet(json_file):
+    '''
+    This function process the tween and count no. of tweet, no. of hashtags in tweet,
+    no. of delete tweet, no. of created tweet.
+    :param json_file: string
+    :return: None
+    '''
+    global _totalrecords
+    global _totaldeleted
+    global _totalcreated
+    global _mindate
+    global _maxdate
+    for record in json_file:
+        _totalrecords += 1
+        tweet = json.loads(record)
+        if 'created_at' in tweet:
+            if 'delete' not in tweet:
+                _totalcreated += 1
+
+                _hashtags = gethashtags(tweet)
+                _noofhashtags = len(_hashtags)
+                _hastagpertweet[_noofhashtags] += 1
+                _usermentions.update(getusermentions(tweet))
+                _tweettokens.update(gettokens(tweet, tokenizer, _stopwords))
+
+                _date = tweet.get('created_at')
+                _dobj = datetime.strptime(_date, "%a %b %d %H:%M:%S %z %Y")
+
+                if _dobj < _mindate: _mindate = _dobj
+
+                if _dobj > _maxdate: _maxdate = _dobj
+
+        else:
+            if 'delete' in tweet:
+                _totaldeleted += 1
+
+def start():
+    '''
+    This function start tweet processing process.
+    :return: None
+    '''
+    os.chdir(_datadir)
+    hours = os.listdir(".")
+    for hour in hours:
+        path = os.path.join(_datadir, hour)
+        os.chdir(path)
+        _files = os.listdir(path)
+        for file in _files:
+            if file.endswith(".json"):
+                with open(file, "r") as f:
+                    process_tweet(f)
+
+start()
+
+print("Total no. of tweets : ", _totalrecords)
+print("Total created tweets : ", _totalcreated)
+print("Total deleted tweets : ", _totaldeleted)
+
+print("---------------------------------------")
+print()
+print("Earliest: ", _mindate)
+print("Latest: ", _maxdate)
+
+print("---------------------------------------")
+print()
+
+print("Frequency distribution table for the number of hashtags contained in each tweet.")
+
+hastagpertweet = pd.DataFrame(_hastagpertweet,
+                              columns=['No of hashtag', 'Count'])
+hastagpertweet
+
+print("---------------------------------------")
+print()
+
+print("Frequency distribution table for the users mentioned in each tweet")
+
+user_mentioned = pd.DataFrame(_usermentions.most_common(30),
+                              columns=['User', 'Count'])
+user_mentioned
+
+print("---------------------------------------")
+print()
+
+print("Frequency distribution table for the words used in the text of each tweet")
+
+tweettokens = pd.DataFrame(_tweettokens.most_common(30),
+                           columns=['Word', 'Count'])
+tweettokens
+
+os.chdir(_datadir)
+
+y = [count for token, count in _tweettokens.most_common(1000)]
+x = range(1, len(y) + 1)
+
+plt.bar(x, y)
+plt.title("Log scale", fontsize = 10)
+plt.suptitle("Frequency of Words Used in Tweets", fontsize = 18, y = 1)
+plt.ylabel("Frequency")
+plt.savefig("standardscale.png", bbox_inches="tight")
+plt.show()
+
+plt.semilogy(x, y)
+plt.title("Standard scale", fontsize = 10)
+plt.suptitle("Frequency of Words Used in Tweets", fontsize = 18, y = 1)
+plt.ylabel("Frequency")
+plt.savefig("logScale.png", bbox_inches="tight")
+plt.show()
+
+_commonwords = set([token for token, count in _tweettokens.most_common(30)])
+
+print(_commonwords)
+
+_tweets = []
+_tweet_created = []
+def gettweet_most_comon_words(json_file):
+    '''
+    This function get tweets for most common word
+    :param json_file: json records
+    :return: none
+    '''
+    global  _tweets
+    global  _tweet_created
+    for record in json_file:
+        tweet = json.loads(record)
+        if "created_at" in tweet:
+            _tokens = gettokens(tweet, tokenizer, _stopwords)
+            for t in _commonwords:
+                if t in _tokens:
+                    _tweets.append(tweet["text"])
+                    _date = tweet.get('created_at')
+                    _dobj = datetime.strptime(_date, "%a %b %d %H:%M:%S %z %Y")
+                    _tweet_created.append(_dobj)
+
+def start_a():
+    '''
+    This function get json file and send to gettweet_most_comon_words  for more processing
+    :return: None
+    '''
+    os.chdir(_datadir)
+    hours = os.listdir(".")
+    for hour in hours:
+        path = os.path.join(_datadir, hour)
+        os.chdir(path)
+        _files = os.listdir(path)
+        for file in _files:
+            if file.endswith(".json"):
+                with open(file, "r") as f:
+                    gettweet_most_comon_words(f)
+
+
+start_a()
+
+_tweetsdf = {'tweet':_tweets, 'created':_tweet_created}
+
+df = pd.DataFrame(_tweetsdf)
+p = df.resample('1Min', on='created').count().plot()
+fig = p.get_figure()
+fig.savefig(r"C:\Me\Study\Conestoga\II\PROG8460\Final\twitter_stream_2019_09_30\30\resample.png")
+
+
+
+
